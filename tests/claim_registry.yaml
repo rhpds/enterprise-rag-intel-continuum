@@ -1,0 +1,20 @@
+# Claim Provenance Registry — every factual assertion in the quickstart
+# Run `make audit-claims` to see unverified claims
+#
+# Rules:
+#   - Every number shown in the UI MUST have an entry here
+#   - Claims with verified: false display with "projected" or "paper reference" label
+#   - Speedup claims require minimum_speedup_for_claim threshold met on live hardware
+#   - Cost claims use "contributes to" / "estimate" language, never "guaranteed"
+
+claims: []
+# Example entry:
+#  - id: speedup-example
+#    value: "2x faster"
+#    file: src/app.py
+#    line: 42
+#    source: "Measured on Intel Xeon 6767P"
+#    source_url: ""
+#    verified: false
+#    verified_date: null
+#    notes: "Pending Oberon measurement"

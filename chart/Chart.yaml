@@ -1,0 +1,9 @@
+apiVersion: v2
+name: enterprise-rag-intel-continuum
+description: Xeon handles embedding, search, and reranking while Gaudi handles generation in a full RAG pipeline.
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+maintainers:
+  - name: Red Hat AI Quickstarts
+    url: https://github.com/rh-ai-quickstart

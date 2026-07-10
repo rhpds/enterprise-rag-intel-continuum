@@ -1,0 +1,47 @@
+# Benchmark Rubric — technique-specific performance validation
+# Governs Stage 4 of the validation matrix.
+#
+# Each quickstart customizes this with its own benchmarks.
+
+benchmark_rubric:
+  version: "1.0"
+  description: "Performance validation for this quickstart"
+
+  verification_policy:
+    verified_means: "Measured by a live endpoint in the target environment"
+    public_claim_rules:
+      - "Do not publish speedup claims unless claim_registry marks them verified"
+      - "If a feature is configured but unmeasured, present as 'configured and measured'"
+      - "Cost claims use 'estimate' language, never 'guaranteed'"
+
+  run_modes:
+    local:
+      description: "Unit tests, contract validation, static checks"
+      no_cluster_required: true
+    compose:
+      description: "Full docker-compose stack with live model inference"
+      requires: ["podman", "docker-compose"]
+    openshift:
+      description: "Helm deployment on OpenShift with full validation"
+      requires: ["oc", "helm"]
+
+  benchmarks:
+    pipeline_latency:
+      description: "End-to-end RAG pipeline query latency"
+      test_query: "What are the benefits of Intel Xeon for AI inference?"
+      max_ms: 10000
+      required_fields: ["answer", "sources", "pipeline_steps", "total_latency_ms"]
+    embedding_latency:
+      description: "Embedding generation latency for a single query"
+      test_text: "Intel Xeon processors for AI workloads"
+      max_ms: 2000
+      required_fields: ["step", "hardware", "latency_ms"]
+    search_latency:
+      description: "Vector similarity search latency"
+      max_ms: 500
+      required_fields: ["step", "hardware", "latency_ms"]
+    document_indexing:
+      description: "Document chunking and embedding indexing"
+      test_text: "Sample document content for benchmarking indexing performance."
+      max_ms: 5000
+      required_fields: ["document_id", "chunks", "embeddings_generated"]

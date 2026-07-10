@@ -1,0 +1,70 @@
+version: "3.8"
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:11434/api/tags"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+
+  ollama-pull:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Pulling nomic-embed-text for embeddings..."
+        OLLAMA_HOST=http://ollama:11434 ollama pull nomic-embed-text
+        echo "Pulling qwen2.5:1.5b for generation..."
+        OLLAMA_HOST=http://ollama:11434 ollama pull qwen2.5:1.5b
+        echo "All models pulled successfully."
+    restart: "no"
+
+  app:
+    build:
+      context: ./src
+      dockerfile: Containerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - EMBEDDING_ENDPOINT=${EMBEDDING_ENDPOINT:-http://ollama:11434}
+      - GENERATION_ENDPOINT=${GENERATION_ENDPOINT:-http://ollama:11434}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-nomic-embed-text}
+      - GENERATION_MODEL=${GENERATION_MODEL:-qwen2.5:1.5b}
+      - DEMO_MODE=${DEMO_MODE:-true}
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      ollama:
+        condition: service_healthy
+
+  ui:
+    build:
+      context: ./src
+      dockerfile: Containerfile
+    ports:
+      - "7860:7860"
+    environment:
+      - APP_URL=http://app:8080
+    command: ["python", "ui.py"]
+    depends_on:
+      app:
+        condition: service_healthy
+
+volumes:
+  ollama_data:
