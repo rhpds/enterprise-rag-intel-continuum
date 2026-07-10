@@ -51,10 +51,10 @@ The quickstart includes a Gradio UI with four tabs: question answering with sour
 
 ```mermaid
 graph LR
-    A[Query] --> B[Embed<br/>Xeon / nomic-embed-text]
-    B --> C[Search<br/>Xeon / numpy cosine]
-    C --> D[Rerank<br/>Xeon / LLM scoring]
-    D --> E[Generate<br/>Gaudi / qwen2.5:1.5b]
+    A[Query] --> B[Embed | Xeon / nomic-embed-text]
+    B --> C[Search | Xeon / numpy cosine]
+    C --> D[Rerank | Xeon / LLM scoring]
+    D --> E[Generate | Gaudi / qwen2.5:1.5b]
     E --> F[Answer with Sources]
 ```
 
