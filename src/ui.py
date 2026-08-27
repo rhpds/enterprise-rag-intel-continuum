@@ -232,7 +232,7 @@ def load_performance():
       |
       v
     +---------------------------+
-    | GENERATE (qwen2.5:1.5b)   |  Intel Gaudi
+    | GENERATE (RHDP MaaS)      |  Intel-backed model service
     +---------------------------+
       |
       v
@@ -255,7 +255,7 @@ def load_performance():
 | Hardware | Pipeline Steps | Role |
 |----------|---------------|------|
 | **Intel Xeon** | {xeon_steps} steps | Embed, Search, Rerank |
-| **Intel Gaudi** | {gaudi_steps} step | Generate |
+| **Intel-backed MaaS** | {gaudi_steps} step | Generate |
 
 ### Intel Inference Continuum
 
@@ -268,11 +268,11 @@ def load_performance():
 | **Embed** | Intel Xeon | nomic-embed-text | Convert query to dense vector |
 | **Search** | Intel Xeon | numpy cosine similarity | Find relevant chunks |
 | **Rerank** | Intel Xeon | LLM cross-encoder | Refine relevance ordering |
-| **Generate** | Intel Gaudi | qwen2.5:1.5b | Synthesize answer from context |
+| **Generate** | Intel-backed MaaS | Allocated model | Synthesize answer from context |
 
 Xeon handles {xeon_steps} of 4 pipeline steps (embedding, search, reranking)
-while Gaudi handles the generation step where low-latency token generation
-is critical for user experience.
+while the RHDP MaaS allocation handles generation. The exact inference
+hardware is determined by the model service backing the allocated model.
 """
 
 
@@ -284,7 +284,7 @@ with gr.Blocks(title="Enterprise RAG -- Intel Continuum") as demo:
     gr.Markdown(
         """
 # Enterprise RAG across the Intel Inference Continuum
-### Xeon handles embedding, search, and reranking -- Gaudi handles generation
+### Xeon handles retrieval -- RHDP MaaS handles generation
 
 > **Disclaimer:** RAG answers are AI-generated from retrieved context
 > -- verify against source documents.

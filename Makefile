@@ -10,7 +10,13 @@ PODMAN ?= podman
 
 .PHONY: help test-all test-contracts test-infra test-unit test-integration \
         test-benchmarks test-publication audit-claims status \
-        build compose-up compose-down lint
+        build compose-up compose-down lint install uninstall
+
+NAMESPACE ?= enterprise-rag-intel-continuum
+RELEASE_NAME ?= enterprise-rag-intel-continuum
+MODEL_NAME ?= qwen3-14b
+MODEL_ENDPOINT ?=
+MODEL_API_KEY ?=
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
@@ -30,7 +36,9 @@ test-infra: ## Stage 1 — Build containers, start stack, check health
 		-E '(api_key|password|secret)\s*[:=]\s*["\x27][^{$$]' src/ chart/ \
 		|| (echo "FAIL: hardcoded secrets found" && exit 1)
 	@echo "=== Helm template render ==="
-	$(HELM) template test chart/ --values chart/values.yaml 2>&1 || \
+	$(HELM) template test chart/ --values chart/values.yaml \
+		--set-string model.endpoint=https://maas.example.com \
+		--set-string model.api_key=test-key 2>&1 || \
 		(echo "FAIL: helm template" && exit 1)
 	@echo "Stage 1: GREEN"
 
@@ -83,3 +91,16 @@ compose-down: ## Stop local dev stack
 lint: ## Lint Python, Helm, and README
 	$(PYTHON) -m ruff check src/ tests/ || true
 	$(HELM) lint chart/ || true
+
+install: ## Deploy to OpenShift using an RHDP MaaS virtual key
+	@test -n "$(MODEL_ENDPOINT)" || (echo "MODEL_ENDPOINT is required" && exit 1)
+	@test -n "$(MODEL_API_KEY)" || (echo "MODEL_API_KEY is required" && exit 1)
+	$(HELM) upgrade --install $(RELEASE_NAME) chart/ \
+		--namespace $(NAMESPACE) \
+		--set-string model.name="$(MODEL_NAME)" \
+		--set-string model.endpoint="$(MODEL_ENDPOINT)" \
+		--set-string model.api_key="$(MODEL_API_KEY)" \
+		--wait --timeout 10m
+
+uninstall: ## Remove the OpenShift deployment
+	$(HELM) uninstall $(RELEASE_NAME) --namespace $(NAMESPACE) --ignore-not-found

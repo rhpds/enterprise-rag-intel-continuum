@@ -1,31 +1,35 @@
 ---
-# LLM configuration
-#
-# Option A: Bring your own model (MaaS - Model as a Service)
-# model:
-#   name: my-model
-#   endpoint: https://my-maas-instance:443
-#   api_key: my-api-key
-#
-# Option B: Deploy a model with this chart
-model: {}
+# OpenAI-compatible MaaS configuration. RHDP supplies these values through
+# quickstart_deploy_via_make and a per-user LiteLLM virtual key.
+model:
+  name: qwen3-14b
+  endpoint: ""
+  api_key: ""
+  api_type: openai
+  hardware: maas
 
 # Application configuration
 app:
   replicas: 1
-  image: quay.io/rh-ai-quickstart/enterprise-rag-intel-continuum:latest
+  image: quay.io/redhat-gpte/enterprise-rag-intel-continuum:latest
+  imagePullPolicy: Always
+
+ui:
+  replicas: 1
+
+route:
+  enabled: true
 
 # RAG pipeline configuration
 rag:
   embedding_model: nomic-embed-text
-  generation_model: qwen2.5:1.5b
   chunk_size: 512
   chunk_overlap: 50
   demo_mode: true
 
-# Ollama configuration (for laptop/dev mode)
+# Ollama is used by docker-compose for laptop development, not by this chart.
 ollama:
-  enabled: true
+  enabled: false
   image: ollama/ollama:latest
   models:
     - nomic-embed-text

@@ -1,6 +1,6 @@
 # Build enterprise RAG across the Intel inference continuum
 
-Xeon handles embedding, search, and reranking while Gaudi handles generation in a full RAG pipeline.
+Xeon handles local retrieval while an Intel-backed RHDP MaaS allocation handles generation in a full RAG pipeline.
 
 ## Table of Contents
 
@@ -22,20 +22,20 @@ Xeon handles embedding, search, and reranking while Gaudi handles generation in 
 
 ## Overview
 
-Enterprise organizations need to build knowledge retrieval systems that provide accurate, source-attributed answers from their document collections. This quickstart deploys a full Retrieval-Augmented Generation (RAG) pipeline across the Intel inference continuum, where Intel Xeon handles embedding, vector search, and reranking while Intel Gaudi accelerates answer generation. AI architects, platform engineers, and DevOps teams can deploy the complete pipeline on Red Hat OpenShift AI and immediately begin indexing documents and querying them with full source attribution and per-step hardware telemetry.
+Enterprise organizations need to build knowledge retrieval systems that provide accurate, source-attributed answers from their document collections. This quickstart deploys a full Retrieval-Augmented Generation (RAG) pipeline across the Intel inference continuum. Intel Xeon handles local embedding and vector search, while an OpenAI-compatible RHDP MaaS allocation performs reranking and answer generation. AI architects, platform engineers, and DevOps teams can deploy the complete pipeline on Red Hat OpenShift AI and immediately begin indexing documents and querying them with full source attribution and per-step telemetry.
 
 ## Detailed description
 
 Retrieval-Augmented Generation reduces hallucination and enables enterprise knowledge base applications by grounding language model responses in retrieved source documents. However, running a full RAG pipeline requires orchestrating multiple compute-intensive steps -- embedding generation, similarity search, relevance reranking, and answer generation -- each with different computational profiles. This quickstart demonstrates how the Intel inference continuum optimizes each step by assigning it to the most appropriate hardware.
 
-The pipeline processes documents through four stages. First, uploaded documents are chunked with configurable overlap (512 tokens, 50-token overlap) and embedded using nomic-embed-text running on Intel Xeon. The resulting vectors are stored in an in-memory numpy-based vector store for cosine similarity search, also on Xeon. When a user submits a query, the system embeds it, retrieves the top-k most relevant chunks, optionally reranks them using LLM-based relevance scoring on Xeon, and then generates a final answer with source citations using qwen2.5:1.5b on Intel Gaudi. Each step reports its hardware assignment and measured latency, giving operators full visibility into pipeline performance.
+The pipeline processes documents through four stages. Uploaded documents are chunked with configurable overlap and represented with deterministic local demo embeddings. The resulting vectors are stored in an in-memory numpy-based vector store for cosine similarity search on Xeon. When a user submits a query, the system retrieves the top-k chunks, optionally reranks them, and generates a source-cited answer through the allocated MaaS model. RHDP currently targets `qwen3-14b`; the exact inference hardware is determined by the service backing that model allocation.
 
 The quickstart includes a Gradio UI with four tabs: question answering with source attribution, document upload and indexing, a document library browser, and a pipeline performance dashboard showing the Intel continuum hardware mapping. A built-in demo mode pre-loads four technical documents about Intel Xeon, Gaudi, Red Hat OpenShift AI, and RAG architecture, allowing immediate exploration without external dependencies.
 
 ### Who is this for
 
 - **AI architects** building enterprise search and knowledge retrieval systems who need a reference RAG architecture across Intel hardware
-- **Platform engineers** deploying RAG pipelines on Red Hat OpenShift AI with Intel Xeon and Gaudi accelerators
+- **Platform engineers** deploying RAG pipelines on Red Hat OpenShift AI with Intel Xeon and RHDP MaaS
 - **DevOps teams** optimizing the inference continuum to assign each pipeline step to the most cost-effective hardware
 
 ### Example use cases
@@ -54,7 +54,7 @@ graph LR
     A[Query] --> B[Embed | Xeon / nomic-embed-text]
     B --> C[Search | Xeon / numpy cosine]
     C --> D[Rerank | Xeon / LLM scoring]
-    D --> E[Generate | Gaudi / qwen2.5:1.5b]
+    D --> E[Generate | RHDP MaaS / qwen3-14b]
     E --> F[Answer with Sources]
 ```
 
@@ -67,14 +67,14 @@ graph LR
 | CPU cores | 4 | 8 |
 | Memory | 8 GiB | 16 GiB |
 | Storage | 10 GiB | 20 GiB |
-| GPU | Not required (laptop mode) | Intel Gaudi 2 (production) |
+| Accelerator | Not required | Supplied by the RHDP MaaS allocation |
 
 ### Minimum software requirements
 
 | Software | Version |
 |----------|---------|
-| Red Hat OpenShift | 4.14+ |
-| Red Hat OpenShift AI | 2.9+ |
+| Red Hat OpenShift | 4.22 |
+| Red Hat OpenShift AI | 3.latest |
 | Helm | 3.12+ |
 | Python | 3.11+ |
 | Ollama | 0.3+ (laptop mode) |
@@ -88,7 +88,7 @@ This quickstart can be deployed by a regular user with namespace-level permissio
 
 ### Prerequisites
 
-- Access to a Red Hat OpenShift cluster with OpenShift AI operator installed, or a local machine with Podman/Docker for laptop mode
+- Access to Red Hat OpenShift 4.22 with Red Hat OpenShift AI 3.latest installed, or a local machine with Podman/Docker for laptop mode
 - Helm CLI installed
 - For laptop mode: Ollama installed with at least 8 GiB of available memory
 
@@ -97,7 +97,7 @@ This quickstart can be deployed by a regular user with namespace-level permissio
 1. Clone the repository:
 
 ```bash
-git clone https://github.com/rh-ai-quickstart/enterprise-rag-intel-continuum.git
+git clone https://github.com/rhpds/enterprise-rag-intel-continuum.git
 cd enterprise-rag-intel-continuum
 ```
 
@@ -132,20 +132,21 @@ oc new-project enterprise-rag-intel-continuum
 
 3. Install using Helm:
 
-**Option A: Use your own model (MaaS - Model as a Service)**
+**RHDP MaaS deployment:**
+
+The OpenShift deployment uses an OpenAI-compatible MaaS endpoint and virtual
+key. The endpoint can be supplied with or without a trailing `/v1`.
 
 ```bash
-helm install enterprise-rag-intel-continuum chart/ \
-  --set model.name=<model-name> \
-  --set model.endpoint=<endpoint-url> \
-  --set model.api_key=<api-key>
+make install \
+  NAMESPACE=enterprise-rag-intel-continuum \
+  MODEL_NAME=qwen3-14b \
+  MODEL_ENDPOINT=https://<maas-host> \
+  MODEL_API_KEY=<virtual-key>
 ```
 
-**Option B: Deploy with the included model**
-
-```bash
-helm install enterprise-rag-intel-continuum chart/
-```
+The chart does not deploy Ollama or a model server on OpenShift. Ollama remains
+available exclusively through `docker compose` for local development.
 
 ### Validating the deployment
 
@@ -194,7 +195,7 @@ docker compose down -v
 **OpenShift mode:**
 
 ```bash
-helm uninstall enterprise-rag-intel-continuum
+make uninstall NAMESPACE=enterprise-rag-intel-continuum
 oc delete project enterprise-rag-intel-continuum
 ```
 
@@ -242,7 +243,7 @@ oc delete project enterprise-rag-intel-continuum
 ## Tags
 
 - **Title:** Build enterprise RAG across the Intel inference continuum
-- **Description:** Xeon handles embedding, search, and reranking while Gaudi handles generation in a full RAG pipeline.
+- **Description:** Xeon handles local retrieval while an Intel-backed RHDP MaaS allocation handles generation.
 - **Industry:** Media and IT services
 - **Product:** Red Hat OpenShift AI
 - **Use case:** AI inference
