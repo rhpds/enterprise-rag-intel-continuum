@@ -101,6 +101,7 @@ install: ## Deploy to OpenShift using an RHDP MaaS virtual key
 		--set-string model.endpoint="$(MODEL_ENDPOINT)" \
 		--set-string model.api_key="$(MODEL_API_KEY)" \
 		--wait --timeout 10m
+	$(HELM) test $(RELEASE_NAME) --namespace $(NAMESPACE) --logs --timeout 5m
 
 uninstall: ## Remove the OpenShift deployment
 	$(HELM) uninstall $(RELEASE_NAME) --namespace $(NAMESPACE) --ignore-not-found

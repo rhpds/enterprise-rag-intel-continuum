@@ -18,7 +18,14 @@ spec:
           case "$MODELS_URL" in */v1) ;; *) MODELS_URL="$MODELS_URL/v1" ;; esac
           curl -sf "$MODELS_URL/models" \
             -H "Authorization: Bearer $MODEL_API_KEY" \
-            && echo "Model access: OK" || exit 1
+            >/dev/null || exit 1
+          CHAT_URL="${MODELS_URL%/models}/chat/completions"
+          curl -sf "$CHAT_URL" \
+            -H "Authorization: Bearer $MODEL_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"model\":\"$MODEL_NAME\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with OK\"}],\"max_tokens\":8,\"temperature\":0}" \
+            >/dev/null || exit 1
+          echo "MaaS model access and generation: OK"
           {{- else }}
           echo "No external model configured — skipping connectivity test"
           {{- end }}
@@ -28,4 +35,6 @@ spec:
             secretKeyRef:
               name: {{ .Release.Name }}-model
               key: api-key
+        - name: MODEL_NAME
+          value: {{ .Values.model.name | quote }}
   restartPolicy: Never
