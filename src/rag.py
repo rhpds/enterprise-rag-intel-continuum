@@ -3,14 +3,14 @@ Enterprise RAG across the Intel Inference Continuum -- FastAPI Application
 
 Adapted from the Red Hat Intel Partner Demo RAG pipeline. Provides document
 upload, chunking, embedding (nomic-embed-text), in-memory numpy vector search,
-LLM-based reranking, and answer generation (qwen2.5:1.5b) with source
+LLM-based reranking, and MaaS answer generation with source
 attribution and per-step hardware assignment reporting.
 
 Intel Continuum mapping:
   - Embed query    -> Xeon (nomic-embed-text)
   - Vector search  -> Xeon (numpy cosine similarity)
   - Rerank         -> Xeon (LLM scoring)
-  - Generate       -> Gaudi (qwen2.5:1.5b)
+  - Generate       -> Intel-backed RHDP MaaS allocation
 """
 
 from __future__ import annotations
@@ -33,12 +33,23 @@ from pydantic import BaseModel, Field
 
 EMBEDDING_ENDPOINT = os.environ.get("EMBEDDING_ENDPOINT", "")
 GENERATION_ENDPOINT = os.environ.get("GENERATION_ENDPOINT", "")
+GENERATION_API_KEY = os.environ.get("GENERATION_API_KEY", "")
+GENERATION_API_TYPE = os.environ.get("GENERATION_API_TYPE", "ollama").lower()
+GENERATION_HARDWARE = os.environ.get("GENERATION_HARDWARE", "maas")
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "nomic-embed-text")
-GENERATION_MODEL = os.environ.get("GENERATION_MODEL", "qwen2.5:1.5b")
+GENERATION_MODEL = os.environ.get("GENERATION_MODEL", "qwen3-14b")
 DEMO_MODE = os.environ.get("DEMO_MODE", "true").lower() == "true"
 CHUNK_SIZE = int(os.environ.get("CHUNK_SIZE", "512"))
 CHUNK_OVERLAP = int(os.environ.get("CHUNK_OVERLAP", "50"))
 EMBEDDING_DIM = int(os.environ.get("EMBEDDING_DIM", "768"))
+
+
+def _openai_api_url(endpoint: str, resource: str) -> str:
+    """Build an OpenAI-compatible URL whether endpoint includes /v1 or not."""
+    base = endpoint.rstrip("/")
+    if base.endswith("/v1"):
+        return f"{base}/{resource.lstrip('/')}"
+    return f"{base}/v1/{resource.lstrip('/')}"
 
 AI_DISCLAIMER = (
     "RAG answers are AI-generated from retrieved context "
@@ -195,7 +206,7 @@ class DocumentProcessor:
         """Generate embeddings for a list of texts. Uses the Ollama
         embedding API when available, falls back to deterministic
         demo embeddings."""
-        if self.embedding_endpoint and not DEMO_MODE:
+        if self.embedding_endpoint:
             return self._live_embeddings(texts)
         return self._demo_embeddings(texts)
 
@@ -336,9 +347,13 @@ class Reranker:
         self,
         generation_endpoint: str = "",
         generation_model: str = GENERATION_MODEL,
+        generation_api_key: str = GENERATION_API_KEY,
+        generation_api_type: str = GENERATION_API_TYPE,
     ):
         self.generation_endpoint = generation_endpoint
         self.generation_model = generation_model
+        self.generation_api_key = generation_api_key
+        self.generation_api_type = generation_api_type
 
     def rerank(
         self,
@@ -349,7 +364,7 @@ class Reranker:
         if not chunks:
             return []
 
-        if self.generation_endpoint and not DEMO_MODE:
+        if self.generation_endpoint:
             return self._llm_rerank(query, chunks)
         return self._demo_rerank(query, chunks)
 
@@ -366,17 +381,33 @@ class Reranker:
                         f"Query: {query}\n\nText: {chunk_data['chunk'][:300]}\n\n"
                         f"Relevance score (0-10):"
                     )
-                    resp = client.post(
-                        f"{endpoint}/api/chat",
-                        json={
-                            "model": self.generation_model,
-                            "messages": [{"role": "user", "content": prompt}],
-                            "stream": False,
-                            "options": {"num_predict": 5, "temperature": 0.0},
-                        },
-                    )
+                    if self.generation_api_type == "openai":
+                        resp = client.post(
+                            _openai_api_url(endpoint, "chat/completions"),
+                            headers={"Authorization": f"Bearer {self.generation_api_key}"},
+                            json={
+                                "model": self.generation_model,
+                                "messages": [{"role": "user", "content": prompt}],
+                                "max_tokens": 5,
+                                "temperature": 0.0,
+                            },
+                        )
+                    else:
+                        resp = client.post(
+                            f"{endpoint}/api/chat",
+                            json={
+                                "model": self.generation_model,
+                                "messages": [{"role": "user", "content": prompt}],
+                                "stream": False,
+                                "options": {"num_predict": 5, "temperature": 0.0},
+                            },
+                        )
                     resp.raise_for_status()
-                    content = resp.json().get("message", {}).get("content", "5")
+                    payload = resp.json()
+                    if self.generation_api_type == "openai":
+                        content = payload.get("choices", [{}])[0].get("message", {}).get("content", "5")
+                    else:
+                        content = payload.get("message", {}).get("content", "5")
                     # Extract numeric score
                     try:
                         score = float("".join(c for c in content if c.isdigit() or c == ".") or "5")
@@ -415,7 +446,7 @@ class RAGPipeline:
       embed    -> xeon  (nomic-embed-text)
       search   -> xeon  (numpy cosine similarity)
       rerank   -> xeon  (LLM scoring)
-      generate -> gaudi (qwen2.5:1.5b)
+      generate -> configured RHDP MaaS allocation
     """
 
     def __init__(
@@ -425,12 +456,16 @@ class RAGPipeline:
         reranker: Reranker,
         generation_endpoint: str = "",
         generation_model: str = GENERATION_MODEL,
+        generation_api_key: str = GENERATION_API_KEY,
+        generation_api_type: str = GENERATION_API_TYPE,
     ):
         self.processor = processor
         self.vector_store = vector_store
         self.reranker = reranker
         self.generation_endpoint = generation_endpoint
         self.generation_model = generation_model
+        self.generation_api_key = generation_api_key
+        self.generation_api_type = generation_api_type
 
     def query(
         self,
@@ -475,13 +510,13 @@ class RAGPipeline:
             "latency_ms": rerank_latency,
         })
 
-        # Step 4: Generate (Gaudi)
+        # Step 4: Generate (hardware is determined by the MaaS allocation)
         step_start = time.time()
         answer = self._generate_answer(query, results)
         generate_latency = round((time.time() - step_start) * 1000, 1)
         pipeline_steps.append({
             "step": "generate",
-            "hardware": "gaudi",
+            "hardware": GENERATION_HARDWARE,
             "latency_ms": generate_latency,
         })
 
@@ -506,12 +541,12 @@ class RAGPipeline:
 
     def _generate_answer(self, query: str, chunks: list[dict]) -> str:
         """Generate an answer from retrieved chunks using the LLM."""
-        if self.generation_endpoint and not DEMO_MODE:
+        if self.generation_endpoint:
             return self._live_generate(query, chunks)
         return self._demo_generate(query, chunks)
 
     def _live_generate(self, query: str, chunks: list[dict]) -> str:
-        """Generate answer via Ollama chat API."""
+        """Generate an answer via Ollama or an OpenAI-compatible MaaS API."""
         context_parts = []
         for i, chunk in enumerate(chunks[:4], 1):
             context_parts.append(f"[Source {i}: {chunk['document']}]\n{chunk['chunk'][:400]}")
@@ -528,20 +563,36 @@ class RAGPipeline:
         try:
             endpoint = self.generation_endpoint.rstrip("/")
             with httpx.Client(timeout=60.0) as client:
-                resp = client.post(
-                    f"{endpoint}/api/chat",
-                    json={
-                        "model": self.generation_model,
-                        "messages": [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": query},
-                        ],
-                        "stream": False,
-                        "options": {"num_predict": 512, "temperature": 0.3},
-                    },
-                )
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": query},
+                ]
+                if self.generation_api_type == "openai":
+                    resp = client.post(
+                        _openai_api_url(endpoint, "chat/completions"),
+                        headers={"Authorization": f"Bearer {self.generation_api_key}"},
+                        json={
+                            "model": self.generation_model,
+                            "messages": messages,
+                            "max_tokens": 512,
+                            "temperature": 0.3,
+                        },
+                    )
+                else:
+                    resp = client.post(
+                        f"{endpoint}/api/chat",
+                        json={
+                            "model": self.generation_model,
+                            "messages": messages,
+                            "stream": False,
+                            "options": {"num_predict": 512, "temperature": 0.3},
+                        },
+                    )
                 resp.raise_for_status()
-                return resp.json().get("message", {}).get("content", "")
+                payload = resp.json()
+                if self.generation_api_type == "openai":
+                    return payload.get("choices", [{}])[0].get("message", {}).get("content", "")
+                return payload.get("message", {}).get("content", "")
         except Exception:
             return self._demo_generate(query, chunks)
 
@@ -663,6 +714,8 @@ vector_store = VectorStore(dim=EMBEDDING_DIM)
 reranker = Reranker(
     generation_endpoint=GENERATION_ENDPOINT,
     generation_model=GENERATION_MODEL,
+    generation_api_key=GENERATION_API_KEY,
+    generation_api_type=GENERATION_API_TYPE,
 )
 pipeline = RAGPipeline(
     processor=processor,
@@ -670,6 +723,8 @@ pipeline = RAGPipeline(
     reranker=reranker,
     generation_endpoint=GENERATION_ENDPOINT,
     generation_model=GENERATION_MODEL,
+    generation_api_key=GENERATION_API_KEY,
+    generation_api_type=GENERATION_API_TYPE,
 )
 
 # Document index tracking
@@ -719,6 +774,8 @@ async def health():
         "demo_mode": DEMO_MODE,
         "embedding_model": EMBEDDING_MODEL,
         "generation_model": GENERATION_MODEL,
+        "generation_api_type": GENERATION_API_TYPE,
+        "generation_configured": bool(GENERATION_ENDPOINT),
     }
 
 

@@ -4,6 +4,7 @@ metadata:
   name: "{{ .Release.Name }}-test-model-access"
   annotations:
     "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 spec:
   containers:
     - name: test
@@ -12,10 +13,19 @@ spec:
       args:
         - |
           {{- if .Values.model.endpoint }}
-          curl -sf {{ .Values.model.endpoint }}/v1/models \
-            -H "Authorization: Bearer {{ .Values.model.api_key }}" \
+          ENDPOINT={{ .Values.model.endpoint | quote }}
+          MODELS_URL="${ENDPOINT%/}"
+          case "$MODELS_URL" in */v1) ;; *) MODELS_URL="$MODELS_URL/v1" ;; esac
+          curl -sf "$MODELS_URL/models" \
+            -H "Authorization: Bearer $MODEL_API_KEY" \
             && echo "Model access: OK" || exit 1
           {{- else }}
           echo "No external model configured — skipping connectivity test"
           {{- end }}
+      env:
+        - name: MODEL_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Release.Name }}-model
+              key: api-key
   restartPolicy: Never

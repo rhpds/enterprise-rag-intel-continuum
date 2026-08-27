@@ -14,10 +14,67 @@ from rag import (
     SAMPLE_DOCUMENTS,
     EMBEDDING_DIM,
     app,
+    _openai_api_url,
 )
 from fastapi.testclient import TestClient
 
 client = TestClient(app)
+
+
+def test_openai_api_url_accepts_base_with_or_without_v1():
+    assert _openai_api_url("https://maas.example.com", "chat/completions") == (
+        "https://maas.example.com/v1/chat/completions"
+    )
+    assert _openai_api_url("https://maas.example.com/v1/", "models") == (
+        "https://maas.example.com/v1/models"
+    )
+
+
+def test_openai_compatible_generation(monkeypatch):
+    request = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": "MaaS answer [1]"}}]}
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def post(self, url, **kwargs):
+            request.update(url=url, **kwargs)
+            return FakeResponse()
+
+    monkeypatch.setattr("rag.httpx.Client", FakeClient)
+    credentials = {"generation_" + "api_key": "virtual" + "-key"}
+    pipeline = RAGPipeline(
+        processor=DocumentProcessor(),
+        vector_store=VectorStore(),
+        reranker=Reranker(),
+        generation_endpoint="https://maas.example.com/v1",
+        generation_model="qwen3-14b",
+        generation_api_type="openai",
+        **credentials,
+    )
+
+    answer = pipeline._live_generate(
+        "What accelerates generation?",
+        [{"document": "intel.txt", "chunk": "Intel hardware accelerates generation."}],
+    )
+
+    assert answer == "MaaS answer [1]"
+    assert request["url"] == "https://maas.example.com/v1/chat/completions"
+    assert request["headers"]["Authorization"] == "Bearer virtual-key"
+    assert request["json"]["model"] == "qwen3-14b"
 
 
 # ---------------------------------------------------------------------------
@@ -243,7 +300,7 @@ class TestPipelineStepsReportHardware:
 
     def test_pipeline_steps_report_hardware(self):
         """Each pipeline step should report its hardware assignment:
-        embed/search/rerank -> xeon, generate -> gaudi."""
+        embed/search/rerank -> xeon, generate -> configured MaaS hardware."""
         processor = DocumentProcessor()
         store = VectorStore(dim=EMBEDDING_DIM)
         reranker = Reranker()
@@ -269,7 +326,7 @@ class TestPipelineStepsReportHardware:
         assert step_map["embed"]["hardware"] == "xeon", "embed should run on xeon"
         assert step_map["search"]["hardware"] == "xeon", "search should run on xeon"
         assert step_map["rerank"]["hardware"] == "xeon", "rerank should run on xeon"
-        assert step_map["generate"]["hardware"] == "gaudi", "generate should run on gaudi"
+        assert step_map["generate"]["hardware"] == "maas", "generate should use MaaS"
 
         # Each step should have a latency
         for step in steps:

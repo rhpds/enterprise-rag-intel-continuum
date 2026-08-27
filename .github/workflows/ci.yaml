@@ -38,7 +38,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4
-      - run: helm lint chart/
+      - run: >-
+          helm lint chart/
+          --set-string model.endpoint=https://maas.example.com
+          --set-string model.api_key=test-key
 
   readme-check:
     name: "Stage 5: Publication"
@@ -56,8 +59,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: |
-          for f in $(find src/ -name "Containerfile" -o -name "Dockerfile"); do
-            echo "Building $f (context: repo root)"
-            podman build -t test -f "$f" . || echo "WARN: $f build failed (may need specific base image)"
-          done
+      - run: podman build -t enterprise-rag-intel-continuum:test -f src/Containerfile src/
